@@ -56,6 +56,50 @@ app.get("/qr", async (req, res) => {
 
 app.get("/health", (req, res) => res.json({ status: botReady ? "connected" : "waiting_qr", timestamp: new Date() }));
 
+// Serve ver.html for expediente viewing
+app.get("/ver", (req, res) => {
+  res.sendFile(path.join(__dirname, "ver.html"));
+});
+
+// Proxy get-app requests to JSONBin
+app.get("/get-app", async (req, res) => {
+  const id = req.query.id;
+  if (!id) return res.status(400).json({ error: "Falta ID" });
+  const key = process.env.JSONBIN_KEY;
+  if (!key) return res.status(500).json({ error: "Sin JSONBIN_KEY" });
+  try {
+    const fetch = require("node-fetch");
+    const r = await fetch(`https://api.jsonbin.io/v3/b/${id}/latest`, {
+      headers: { "X-Master-Key": key }
+    });
+    if (!r.ok) return res.status(404).json({ error: "No encontrada" });
+    const data = await r.json();
+    res.json(data.record || data);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Proxy get-doc requests to JSONBin
+app.get("/get-doc", async (req, res) => {
+  const id = req.query.id;
+  if (!id) return res.status(400).send("Falta ID");
+  const key = process.env.JSONBIN_KEY;
+  if (!key) return res.status(500).send("Sin JSONBIN_KEY");
+  try {
+    const fetch = require("node-fetch");
+    const r = await fetch(`https://api.jsonbin.io/v3/b/${id}/latest`, {
+      headers: { "X-Master-Key": key }
+    });
+    if (!r.ok) return res.status(404).send("No encontrado");
+    const data = await r.json();
+    const { base64, mediaType } = data.record || data;
+    if (!base64) return res.status(404).send("Sin datos");
+    const buf = Buffer.from(base64, "base64");
+    res.set("Content-Type", mediaType || "image/jpeg");
+    res.set("Cache-Control", "public, max-age=2592000");
+    res.send(buf);
+  } catch(e) { res.status(500).send(e.message); }
+});
+
 // ─── Baileys WhatsApp Bot ───
 async function startBot() {
   const authDir = path.join(__dirname, "auth_info_baileys");
