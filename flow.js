@@ -70,7 +70,7 @@ function buildSummary(D, store, score, linkUrl) {
 }
 
 // Main message handler — returns array of response strings
-async function handleMessage(phone, text, mediaBuffer, mediaType) {
+async function handleMessage(phone, text, mediaBuffer, mediaType, sock) {
   const session = getSession(phone);
   const { step, data: D } = session;
   const responses = [];
@@ -94,13 +94,27 @@ async function handleMessage(phone, text, mediaBuffer, mediaType) {
       return responses;
     }
 
-    // Store doc for later
+    // Store original buffer for direct WhatsApp forwarding to store manager
+    let compressedBuffer = mediaBuffer;
+    let finalMediaType = mediaType || "image/jpeg";
+    if (!mediaType?.includes("pdf")) {
+      try {
+        const sharp = require("sharp");
+        compressedBuffer = await sharp(mediaBuffer)
+          .resize({ width: 900, height: 900, fit: "inside", withoutEnlargement: true })
+          .jpeg({ quality: 60 })
+          .toBuffer();
+        finalMediaType = "image/jpeg";
+      } catch(e) { console.log("Sharp error:", e.message); }
+    }
     session.docs.push({
       type: docType,
-      name: `${docType}-${Date.now()}.${mediaType?.includes("pdf") ? "pdf" : "jpg"}`,
-      mediaType: mediaType || "image/jpeg",
-      base64: mediaBuffer.toString("base64")
+      name: `${docType}-${Date.now()}.${finalMediaType.includes("pdf") ? "pdf" : "jpg"}`,
+      mediaType: finalMediaType,
+      buffer: compressedBuffer,          // keep buffer for WA forwarding
+      base64: compressedBuffer.toString("base64") // keep base64 for JSONBin
     });
+    console.log(`Doc stored: type=${docType} size=${compressedBuffer.length} bytes`);
 
     if (docType === "ine_front") {
       D.ineFront = true;
@@ -443,7 +457,7 @@ async function handleMessage(phone, text, mediaBuffer, mediaType) {
     if (!store) { reply("Por favor responde con un número del 1 al 10."); return responses; }
     D.selectedStore = store;
     session.step = "processing";
-    await finalize(phone, session, reply);
+    await finalize(phone, session, reply, sock);
     return responses;
   }
 
@@ -551,7 +565,7 @@ function askStore(session, reply) {
   session.step = "store";
 }
 
-async function finalize(phone, session, reply) {
+async function finalize(phone, session, reply, sock) {
   const D = session.data;
   const store = D.selectedStore;
 
@@ -584,7 +598,69 @@ async function finalize(phone, session, reply) {
   }
 
   const summary = buildSummary(D, store, score, linkResult?.url);
-  reply("📲 *Tu solicitud está lista.* El jefe de tienda recibirá toda tu información.\n\n" + summary);
+
+  // ─── Envío automático al jefe de tienda ───
+  const jefJid = `${store.wa}@s.whatsapp.net`;
+  const docLabels = {
+    ine_front:     "📷 INE — Frente",
+    ine_back:      "📷 INE — Reverso",
+    income_proof:  "📄 Comprobante de Ingresos",
+    address_proof: "📄 Comprobante de Domicilio"
+  };
+
+  try {
+    // 1. Alerta + resumen completo
+    await sock.sendMessage(jefJid, {
+      text: `🔔 *NUEVA SOLICITUD DE CRÉDITO*
+
+🏪 Tienda: *${store.name}*
+📅 ${new Date().toLocaleString("es-MX",{dateStyle:"short",timeStyle:"short"})}`
+    });
+    await new Promise(r => setTimeout(r, 600));
+
+    await sock.sendMessage(jefJid, { text: summary });
+    await new Promise(r => setTimeout(r, 600));
+
+    // 2. Enviar cada documento directamente por WhatsApp
+    for (const doc of session.docs) {
+      if (!doc.buffer) continue;
+      try {
+        const isImage = doc.mediaType?.startsWith("image/");
+        const label = docLabels[doc.type] || doc.type;
+        if (isImage) {
+          await sock.sendMessage(jefJid, {
+            image: doc.buffer,
+            caption: label,
+            mimetype: doc.mediaType
+          });
+        } else {
+          await sock.sendMessage(jefJid, {
+            document: doc.buffer,
+            fileName: doc.name,
+            caption: label,
+            mimetype: doc.mediaType || "application/pdf"
+          });
+        }
+        await new Promise(r => setTimeout(r, 800));
+        console.log(`Sent doc to jefe: ${doc.type}`);
+      } catch(e) {
+        console.log(`Failed to send doc ${doc.type}:`, e.message);
+      }
+    }
+
+    console.log(`✅ Solicitud enviada al jefe de ${store.name}`);
+    reply(`✅ *¡Solicitud completada!*
+
+Toda tu información y documentos fueron enviados directamente al jefe de *${store.name}* por WhatsApp.
+
+Preséntate con tus documentos originales para firmar el pagaré. 🏪`);
+
+  } catch(e) {
+    console.error("Error enviando al jefe:", e.message);
+    reply(`✅ *¡Solicitud completada!*
+
+Preséntate en *${store.name}* con tus documentos originales. 🏪`);
+  }
 
   session.step = "done";
   clearSession(phone);
