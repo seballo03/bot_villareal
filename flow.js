@@ -1,5 +1,24 @@
 // flow.js — Máquina de estados para el flujo de solicitud de crédito
 const { verifyDocument, getCreditScore } = require("./ai");
+
+// Get correct WhatsApp JID for a number
+async function getJid(sock, number) {
+  try {
+    // Clean number - digits only
+    const clean = number.replace(/\D/g, "");
+    const results = await sock.onWhatsApp(clean);
+    if (results && results.length > 0 && results[0].exists) {
+      console.log(`JID found for ${clean}: ${results[0].jid}`);
+      return results[0].jid;
+    }
+    // Fallback to standard format
+    console.log(`No JID found for ${clean}, using fallback`);
+    return `${clean}@s.whatsapp.net`;
+  } catch(e) {
+    console.log(`getJid error: ${e.message}`);
+    return `${number.replace(/\D/g,"")}@s.whatsapp.net`;
+  }
+}
 const { saveExpediente, searchClient } = require("./storage");
 const { STORES, PARENTESCO } = require("./config");
 
@@ -207,8 +226,10 @@ async function handleMessage(phone, text, mediaBuffer, mediaType, sock) {
     const targetNum = t.split(":")[1]?.trim();
     if (targetNum && sock) {
       try {
-        await sock.sendMessage(`${targetNum}@s.whatsapp.net`, { text: "🤖 Prueba de envío desde bot Crédito Villarreal ✅" });
-        reply(`✅ Mensaje de prueba enviado a ${targetNum}`);
+        const jid = await getJid(sock, targetNum);
+        reply(`Buscando número ${targetNum}... JID: ${jid}`);
+        await sock.sendMessage(jid, { text: "🤖 Prueba de envío desde bot Crédito Villarreal ✅" });
+        reply(`✅ Mensaje enviado a ${jid}`);
       } catch(e) {
         reply(`❌ Error: ${e.message}`);
       }
@@ -617,8 +638,9 @@ async function finalize(phone, session, reply, sock) {
 
   // ─── Envío automático al jefe de tienda ───
   const jefWa = store.wa;
-  const jefJid = `${jefWa}@s.whatsapp.net`;
-  console.log(`Enviando al jefe de ${store.name}: ${jefJid}`);
+  console.log(`Buscando JID para jefe de ${store.name}: ${jefWa}`);
+  const jefJid = await getJid(sock, jefWa);
+  console.log(`JID del jefe: ${jefJid}`);
   console.log(`sock disponible: ${!!sock}`);
   console.log(`Docs a enviar: ${session.docs.length}`);
 
