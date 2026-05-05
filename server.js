@@ -78,26 +78,24 @@ app.get("/get-app", async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Proxy get-doc requests to JSONBin
+// Proxy get-doc requests to JSONBin (supports chunked files)
 app.get("/get-doc", async (req, res) => {
   const id = req.query.id;
   if (!id) return res.status(400).send("Falta ID");
-  const key = process.env.JSONBIN_KEY;
-  if (!key) return res.status(500).send("Sin JSONBIN_KEY");
   try {
-    const fetch = require("node-fetch");
-    const r = await fetch(`https://api.jsonbin.io/v3/b/${id}/latest`, {
-      headers: { "X-Master-Key": key }
-    });
-    if (!r.ok) return res.status(404).send("No encontrado");
-    const data = await r.json();
-    const { base64, mediaType } = data.record || data;
-    if (!base64) return res.status(404).send("Sin datos");
-    const buf = Buffer.from(base64, "base64");
-    res.set("Content-Type", mediaType || "image/jpeg");
+    const { getDocById } = require("./storage");
+    const doc = await getDocById(id);
+    if (!doc || !doc.base64) return res.status(404).send("No encontrado");
+    const buf = Buffer.from(doc.base64, "base64");
+    const fname = doc.name || "documento";
+    res.set("Content-Type", doc.mediaType || "application/octet-stream");
     res.set("Cache-Control", "public, max-age=2592000");
+    res.set("Content-Disposition", `inline; filename="${fname}"`);
     res.send(buf);
-  } catch(e) { res.status(500).send(e.message); }
+  } catch(e) {
+    console.error("get-doc error:", e.message);
+    res.status(500).send(e.message);
+  }
 });
 
 // ─── Baileys WhatsApp Bot ───
@@ -197,7 +195,7 @@ async function startBot() {
 
       // Process message
       try {
-        const responses = await handleMessage(phone, text, mediaBuffer, mediaType);
+        const responses = await handleMessage(phone, text, mediaBuffer, mediaType, sock);
         for (const response of responses) {
           await sendMessage(sock, phone, response);
           await sleep(500); // small delay between messages
