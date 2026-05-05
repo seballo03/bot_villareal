@@ -202,6 +202,22 @@ async function handleMessage(phone, text, mediaBuffer, mediaType, sock) {
 
   if (!t && !mediaBuffer) return responses;
 
+  // TEST COMMAND — admin only
+  if (t.toLowerCase().startsWith("test:")) {
+    const targetNum = t.split(":")[1]?.trim();
+    if (targetNum && sock) {
+      try {
+        await sock.sendMessage(`${targetNum}@s.whatsapp.net`, { text: "🤖 Prueba de envío desde bot Crédito Villarreal ✅" });
+        reply(`✅ Mensaje de prueba enviado a ${targetNum}`);
+      } catch(e) {
+        reply(`❌ Error: ${e.message}`);
+      }
+    } else {
+      reply("Uso: test:NUMERO (ej: test:528112345678)");
+    }
+    return responses;
+  }
+
   // RESTART
   if (t.toLowerCase() === "inicio" || t.toLowerCase() === "reiniciar" || t === "0") {
     clearSession(phone);
@@ -600,7 +616,12 @@ async function finalize(phone, session, reply, sock) {
   const summary = buildSummary(D, store, score, linkResult?.url);
 
   // ─── Envío automático al jefe de tienda ───
-  const jefJid = `${store.wa}@s.whatsapp.net`;
+  const jefWa = store.wa;
+  const jefJid = `${jefWa}@s.whatsapp.net`;
+  console.log(`Enviando al jefe de ${store.name}: ${jefJid}`);
+  console.log(`sock disponible: ${!!sock}`);
+  console.log(`Docs a enviar: ${session.docs.length}`);
+
   const docLabels = {
     ine_front:     "📷 INE — Frente",
     ine_back:      "📷 INE — Reverso",
@@ -608,58 +629,95 @@ async function finalize(phone, session, reply, sock) {
     address_proof: "📄 Comprobante de Domicilio"
   };
 
-  try {
-    // 1. Alerta + resumen completo
-    await sock.sendMessage(jefJid, {
-      text: `🔔 *NUEVA SOLICITUD DE CRÉDITO*
+  let jefeEnviado = false;
+  let errorJefe = "";
+
+  // Verificar que sock existe
+  if (!sock) {
+    console.error("ERROR: sock es null/undefined — no se puede enviar al jefe");
+    errorJefe = "sock no disponible";
+  } else {
+    try {
+      // 1. Alerta
+      console.log("Enviando alerta al jefe...");
+      await sock.sendMessage(jefJid, {
+        text: `🔔 *NUEVA SOLICITUD DE CRÉDITO*
 
 🏪 Tienda: *${store.name}*
-📅 ${new Date().toLocaleString("es-MX",{dateStyle:"short",timeStyle:"short"})}`
-    });
-    await new Promise(r => setTimeout(r, 600));
+📅 ${new Date().toLocaleString("es-MX",{dateStyle:"short",timeStyle:"short"})}
+👤 Cliente: ${D.name||D.nombres||"Sin nombre"}
+📞 Tel: ${D.phone||"N/A"}`
+      });
+      console.log("Alerta enviada OK");
+      await new Promise(r => setTimeout(r, 800));
 
-    await sock.sendMessage(jefJid, { text: summary });
-    await new Promise(r => setTimeout(r, 600));
+      // 2. Resumen
+      console.log("Enviando resumen al jefe...");
+      await sock.sendMessage(jefJid, { text: summary });
+      console.log("Resumen enviado OK");
+      await new Promise(r => setTimeout(r, 800));
 
-    // 2. Enviar cada documento directamente por WhatsApp
-    for (const doc of session.docs) {
-      if (!doc.buffer) continue;
-      try {
-        const isImage = doc.mediaType?.startsWith("image/");
-        const label = docLabels[doc.type] || doc.type;
-        if (isImage) {
-          await sock.sendMessage(jefJid, {
-            image: doc.buffer,
-            caption: label,
-            mimetype: doc.mediaType
-          });
-        } else {
-          await sock.sendMessage(jefJid, {
-            document: doc.buffer,
-            fileName: doc.name,
-            caption: label,
-            mimetype: doc.mediaType || "application/pdf"
-          });
-        }
-        await new Promise(r => setTimeout(r, 800));
-        console.log(`Sent doc to jefe: ${doc.type}`);
-      } catch(e) {
-        console.log(`Failed to send doc ${doc.type}:`, e.message);
+      // 3. Link expediente
+      if (linkResult?.url) {
+        await sock.sendMessage(jefJid, {
+          text: `📋 *Expediente completo:*
+${linkResult.url}`
+        });
+        await new Promise(r => setTimeout(r, 500));
       }
-    }
 
-    console.log(`✅ Solicitud enviada al jefe de ${store.name}`);
+      // 4. Documentos
+      console.log(`Enviando ${session.docs.length} documentos...`);
+      for (const doc of session.docs) {
+        if (!doc.buffer) { console.log(`Doc ${doc.type}: sin buffer`); continue; }
+        try {
+          const isImage = doc.mediaType?.startsWith("image/");
+          const label = docLabels[doc.type] || doc.name;
+          console.log(`Enviando ${doc.type} (${doc.buffer.length} bytes, isImage=${isImage})...`);
+          if (isImage) {
+            await sock.sendMessage(jefJid, {
+              image: doc.buffer,
+              caption: label,
+              mimetype: doc.mediaType || "image/jpeg"
+            });
+          } else {
+            await sock.sendMessage(jefJid, {
+              document: doc.buffer,
+              fileName: doc.name || `${doc.type}.pdf`,
+              caption: label,
+              mimetype: doc.mediaType || "application/pdf"
+            });
+          }
+          console.log(`Doc ${doc.type} enviado OK`);
+          await new Promise(r => setTimeout(r, 1000));
+        } catch(e) {
+          console.error(`Error enviando doc ${doc.type}:`, e.message);
+        }
+      }
+
+      jefeEnviado = true;
+      console.log(`✅ Todo enviado al jefe de ${store.name}`);
+
+    } catch(e) {
+      errorJefe = e.message;
+      console.error("Error enviando al jefe:", e.message, e.stack);
+    }
+  }
+
+  if (jefeEnviado) {
     reply(`✅ *¡Solicitud completada!*
 
-Toda tu información y documentos fueron enviados directamente al jefe de *${store.name}* por WhatsApp.
+Tu información y documentos fueron enviados al jefe de *${store.name}* por WhatsApp. 📲
 
 Preséntate con tus documentos originales para firmar el pagaré. 🏪`);
-
-  } catch(e) {
-    console.error("Error enviando al jefe:", e.message);
+  } else {
     reply(`✅ *¡Solicitud completada!*
 
-Preséntate en *${store.name}* con tus documentos originales. 🏪`);
+Preséntate en *${store.name}* con tus documentos.
+
+⚠️ _Error notificando al jefe: ${errorJefe} — muéstrale este resumen:_
+
+${summary.slice(0,800)}`);
   }
 
   session.step = "done";
