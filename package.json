@@ -1,0 +1,23 @@
+{
+  "name": "credito-villarreal-bot",
+  "version": "1.0.0",
+  "description": "Bot de WhatsApp para solicitudes de crédito",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.16",
+    "axios": "^1.7.2",
+    "express": "^4.19.2",
+    "form-data": "^4.0.0",
+    "node-fetch": "^2.7.0",
+    "pino": "^9.3.2",
+    "qrcode": "^1.5.4",
+    "sharp": "^0.33.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
