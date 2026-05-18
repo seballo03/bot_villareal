@@ -4,14 +4,16 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
     chromium \
+    git \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-RUN npm install -g @wppconnect-team/wppconnect-server@latest
+RUN git clone https://github.com/wppconnect-team/wppconnect-server.git . && \
+    npm install
 
 EXPOSE 21465
 
-CMD ["wppconnect-server"]
+CMD ["npm", "start"]
